@@ -1,0 +1,27 @@
+DoD — Definition of Done (critères stricts)
+
+Le sprint est DONE si et seulement si :
+
+Tous les axes listés en SB-2 sont définis selon exactement le schéma SB-1.
+
+Chaque axe contient :
+
+au moins 4 villes jalons
+
+une direction cardinale non ambiguë
+
+Aucune référence à :
+
+autoroutes modernes
+
+régions administratives contemporaines
+
+Le livrable est :
+
+lisible
+
+structuré
+
+directement intégrable dans la carte HTML (JSON-compatible)
+
+Un lecteur externe peut reconstruire mentalement la carte sans image.
