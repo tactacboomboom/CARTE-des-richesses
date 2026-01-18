@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Paris (75) – Couronnes + Orientation/Zoom + Arrondissements (stylisé)</title>
+  <title>Paris – Carte des axes historiques (v0.0.3)</title>
   <style>
     body { font-family: system-ui, Arial, sans-serif; margin: 0; background:#0b0c10; color:#e6e6e6; }
     header { padding: 16px 20px; border-bottom: 1px solid #222; }
@@ -92,6 +92,55 @@
  *  1) Données
  *  ========================= */
 const PARIS = "Paris (75)";
+
+// =========================
+// AXES HISTORIQUES (Sprint 1)
+// =========================
+const AXES = [
+  {
+    id: "AXE_SEINE",
+    nom: "Axe de la Seine",
+    direction: "NW-SE",
+    type: "fluvial",
+    villes: ["Dijon", "Fontainebleau", "Paris (75)", "Rouen", "Le Havre"]
+  },
+  {
+    id: "AXE_NORD",
+    nom: "Axe Nord-Manche",
+    direction: "N",
+    type: "commercial",
+    villes: ["Calais", "Amiens", "Paris (75)"]
+  },
+  {
+    id: "AXE_SUD",
+    nom: "Axe Sud-Méditerranée",
+    direction: "S",
+    type: "mixte",
+    villes: ["Montpellier", "Bourges", "Orléans", "Paris (75)"]
+  },
+  {
+    id: "AXE_EST",
+    nom: "Axe Est-Carolingien",
+    direction: "E",
+    type: "politique",
+    villes: ["Aix-la-Chapelle", "Reims", "Paris (75)"]
+  },
+  {
+    id: "AXE_OUEST",
+    nom: "Axe Atlantique",
+    direction: "W",
+    type: "commercial",
+    villes: ["La Rochelle", "Orléans", "Paris (75)"]
+  },
+  {
+    id: "AXE_SUD_OUEST",
+    nom: "Axe Loire-Garonne",
+    direction: "SW",
+    type: "commercial",
+    villes: ["Bordeaux", "Tours", "Orléans", "Paris (75)"]
+  }
+];
+
 
 const ring1Seed = [
   "Boulogne-Billancourt (92)", "Neuilly-sur-Seine (92)", "Levallois-Perret (92)", "Clichy (92)",
@@ -438,6 +487,63 @@ function drawArrondissements(g){
   g.appendChild(ring);
 }
 
+// =========================
+// Rendu des axes historiques
+// =========================
+function drawAxes(g) {
+  const cx = 600, cy = 400;
+  const length = 520;
+
+  const colors = {
+    fluvial: "#4aa3df",
+    commercial: "#d4b24c",
+    politique: "#c75c5c",
+    mixte: "#9b7bd3"
+  };
+
+  AXES.forEach(axis => {
+    let angle = 0;
+    switch (axis.direction) {
+      case "N": angle = -90; break;
+      case "S": angle = 90; break;
+      case "E": angle = 0; break;
+      case "W": angle = 180; break;
+      case "NW-SE": angle = -45; break;
+      case "SW": angle = 135; break;
+    }
+
+    const rad = angle * Math.PI / 180;
+    const x2 = cx + length * Math.cos(rad);
+    const y2 = cy + length * Math.sin(rad);
+
+    g.appendChild(el("line", {
+      x1: cx,
+      y1: cy,
+      x2: x2,
+      y2: y2,
+      stroke: colors[axis.type] || "#888",
+      "stroke-width": 3,
+      "stroke-dasharray": "8 6",
+      opacity: "0.85"
+    }));
+
+    // Label axe
+    const lx = cx + (length + 20) * Math.cos(rad);
+    const ly = cy + (length + 20) * Math.sin(rad);
+
+    const label = el("text", {
+      x: lx,
+      y: ly,
+      fill: colors[axis.type] || "#ccc",
+      "font-size": 12,
+      "text-anchor": "middle"
+    });
+    label.textContent = axis.nom;
+    g.appendChild(label);
+  });
+}
+
+
 /** =========================
  *  8) Rendu principal
  *  ========================= */
@@ -474,6 +580,10 @@ function redraw(){
   if(toggleArr.checked){
     drawArrondissements(contentG);
   }
+
+// Axes historiques
+drawAxes(contentG);
+
 
   // Routes
   if(toggleRoutes.checked){
