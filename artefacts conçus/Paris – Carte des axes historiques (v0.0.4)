@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Paris – Carte des axes historiques (v0.0.3)</title>
+  <title>Paris – Carte des axes historiques (v0.0.4)</title>
   <style>
     body { font-family: system-ui, Arial, sans-serif; margin: 0; background:#0b0c10; color:#e6e6e6; }
     header { padding: 16px 20px; border-bottom: 1px solid #222; }
@@ -49,6 +49,8 @@
       <label><input type="checkbox" id="toggleRoutes" checked>Routes (corridors)</label>
       <label><input type="checkbox" id="toggleLabels" checked>Labels villes</label>
       <label><input type="checkbox" id="toggleArr" checked>Arrondissements</label>
+      <label><input type="checkbox" id="toggleRings" checked>Couronnes</label>
+      <label><input type="checkbox" id="toggleAxes" checked>Axes</label>
 
       <label style="gap:10px;">
         Couronnes max:
@@ -393,6 +395,8 @@ const svg = document.getElementById("viz");
 const toggleRoutes = document.getElementById("toggleRoutes");
 const toggleLabels = document.getElementById("toggleLabels");
 const toggleArr = document.getElementById("toggleArr");
+const toggleRings = document.getElementById("toggleRings");
+const toggleAxes = document.getElementById("toggleAxes");
 const kMaxInput = document.getElementById("kMax");
 const kVal = document.getElementById("kVal");
 const zoomInput = document.getElementById("zoom");
@@ -522,9 +526,10 @@ function drawAxes(g) {
       x2: x2,
       y2: y2,
       stroke: colors[axis.type] || "#888",
-      "stroke-width": 3,
-      "stroke-dasharray": "8 6",
-      opacity: "0.85"
+      \"stroke-width\": 4,
+      \"stroke-dasharray\": \"10 7\",
+      \"marker-end\": `url(#arrow-${axis.type})`,
+      opacity: \"0.95\"
     }));
 
     // Label axe
@@ -565,26 +570,21 @@ function redraw(){
 
   const rings = computeRings(kMax);
   const all = [PARIS, ...rings.flat()];
-  const pos = place(rings);
-
-  // Cercles couronnes
-  const radii = [140, 250, 350, 460];
-  for(let i=0; i<kMax; i++){
-    contentG.appendChild(el("circle", {
-      cx:600, cy:400, r:radii[i] || (140 + i*110),
-      fill:"none", stroke:"#2a2f3a", "stroke-width":2
-    }));
+  const pos = place(rings);  // Cercles couronnes
+  if (toggleRings.checked) {
+    const radii = [140, 250, 350, 460];
+    for (let i = 0; i < kMax; i++) {
+      contentG.appendChild(el("circle", {
+        cx: 600, cy: 400, r: radii[i] || (140 + i * 110),
+        fill: "none", stroke: "#222a36", "stroke-width": 1.5, opacity: "0.65"
+      }));
+    }
   }
 
   // Arrondissements
   if(toggleArr.checked){
     drawArrondissements(contentG);
   }
-
-// Axes historiques
-drawAxes(contentG);
-
-
   // Routes
   if(toggleRoutes.checked){
     for(const [a,b] of routes){
@@ -595,6 +595,35 @@ drawAxes(contentG);
         stroke:"#3b475e", "stroke-width":4, "stroke-linecap":"round", opacity:"0.75"
       }));
     }
+  }
+
+
+  // Axes historiques
+  if (toggleAxes.checked) {
+    // defs (flèches) – une par type, pour garder les couleurs cohérentes
+    const defs = el("defs");
+    const axisColors = {
+      fluvial: "#4aa3df",
+      commercial: "#d4b24c",
+      politique: "#c75c5c",
+      mixte: "#9b7bd3"
+    };
+    for (const [t, col] of Object.entries(axisColors)) {
+      const marker = el("marker", {
+        id: `arrow-${t}`,
+        viewBox: "0 0 10 10",
+        refX: "9",
+        refY: "5",
+        markerWidth: "6",
+        markerHeight: "6",
+        orient: "auto"
+      });
+      marker.appendChild(el("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: col }));
+      defs.appendChild(marker);
+    }
+    contentG.appendChild(defs);
+
+    drawAxes(contentG);
   }
 
   // Nœuds
@@ -634,7 +663,7 @@ drawAxes(contentG);
 
   // mini texte fixe (hors transform) pour rappeler gestes
   const ui = el("text",{ x:20, y:30, fill:"#cfcfcf", "font-size":14 });
-  ui.textContent = "Molette=zoom | Drag=pan | Double-clic=reset | Rotation=N/E/S/O";
+  ui.textContent = "Molette=zoom | Drag=pan | Double-clic=reset | Rotation=N/E/S/O | Toggles: Couronnes/Axes/Routes";
   svg.appendChild(ui);
 }
 
@@ -664,6 +693,8 @@ kMaxInput.addEventListener("input", redraw);
 toggleRoutes.addEventListener("change", redraw);
 toggleLabels.addEventListener("change", redraw);
 toggleArr.addEventListener("change", redraw);
+toggleRings.addEventListener("change", redraw);
+toggleAxes.addEventListener("change", redraw);
 
 zoomInput.addEventListener("input", () => setScale(parseFloat(zoomInput.value)));
 
