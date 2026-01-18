@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Paris (75) – Couronnes & départements limitrophes</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 0; background:#0b0c10; color:#e6e6e6; }
+    header { padding: 16px 20px; border-bottom: 1px solid #222; }
+    .row { display:flex; gap:16px; padding:16px 20px; flex-wrap:wrap; }
+    .card { background:#12141a; border:1px solid #222; border-radius:12px; padding:12px; }
+    .controls { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    label { display:flex; gap:8px; align-items:center; cursor:pointer; }
+    input[type="range"] { width: 200px; }
+    svg { width: 100%; height: calc(100vh - 170px); display:block; background: radial-gradient(circle at center, #0f1118, #07080c); }
+    .muted { color:#a7a7a7; font-size: 13px; line-height: 1.35; }
+    .chip { display:inline-block; padding:2px 8px; border:1px solid #2a2a2a; border-radius:999px; font-size:12px; color:#cfcfcf; }
+    .legend { display:flex; gap:10px; flex-wrap:wrap; }
+  </style>
+</head>
+<body>
+<header>
+  <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:baseline;">
+    <h2 style="margin:0;">Département 75 (Paris) – Couronnes de communes & liens routiers (stylisé)</h2>
+    <div class="legend">
+      <span class="chip">75 = centre</span>
+      <span class="chip">92/93/94 = départements limitrophes</span>
+      <span class="chip">Rings = BFS sur “limitrophie”</span>
+      <span class="chip">Routes = corridors stylisés</span>
+    </div>
+  </div>
+  <p class="muted" style="margin:8px 0 0;">
+    Positions et routes sont approximatives (schéma lisible > exactitude géographique).
+    Étends les adjacences si tu veux des couronnes plus “vraies”.
+  </p>
+</header>
+
+<div class="row">
+  <div class="card" style="flex: 1 1 420px;">
+    <div class="controls">
+      <label><input type="checkbox" id="toggleRoutes" checked>Afficher les “grandes routes”</label>
+      <label><input type="checkbox" id="toggleLabels" checked>Afficher les labels</label>
+      <label style="gap:10px;">
+        Couronnes max:
+        <input type="range" id="kMax" min="1" max="4" value="3" />
+        <span id="kVal" class="chip">3</span>
+      </label>
+    </div>
+    <p class="muted">
+      Définition “ville pertinente” (Keep=1) ici = (population ≥ 30k) OU (hub transport) OU (connecteur de corridor).
+      Modifie la fonction <code>isRelevant()</code> si tu veux.
+    </p>
+  </div>
+
+  <div class="card" style="flex: 1 1 420px;">
+    <p class="muted" style="margin:0;">
+      Départements limitrophes de Paris (75) : <b>92</b> (Hauts-de-Seine), <b>93</b> (Seine-Saint-Denis), <b>94</b> (Val-de-Marne).
+      Les grands raccordements du périph donnent aussi des axes (A1, A3, A4, A6a/A6b, A13/A14…).  
+    </p>
+  </div>
+</div>
+
+<svg id="viz" viewBox="0 0 1200 800" aria-label="Schéma couronnes Paris"></svg>
+
+<script>
+/** =========================
+ *  1) Données (minimalistes)
+ *  =========================
+ *  nodes: communes “pertinentes” de départ + Paris
+ *  adj: limitrophie (partielle) pour fabriquer des couronnes
+ *
+ *  Tu peux étendre: ajouter des villes, compléter les adjacences.
+ */
+
+// Centre
+const PARIS = "Paris (75)";
+
+// Noyau “couronne 1” (set de départ pragmatique, très proche de ce que tu veux)
+const ring1Seed = [
+  // Ouest / Nord-Ouest
+  "Boulogne-Billancourt (92)", "Neuilly-sur-Seine (92)", "Levallois-Perret (92)", "Clichy (92)",
+  // Nord
+  "Saint-Ouen-sur-Seine (93)", "Saint-Denis (93)", "Aubervilliers (93)",
+  // Est / Nord-Est
+  "Pantin (93)", "Les Lilas (93)", "Le Pré-Saint-Gervais (93)", "Bagnolet (93)", "Montreuil (93)",
+  // Sud-Est
+  "Vincennes (94)", "Saint-Mandé (94)", "Charenton-le-Pont (94)", "Ivry-sur-Seine (94)",
+  // Sud
+  "Le Kremlin-Bicêtre (94)", "Gentilly (94)", "Montrouge (92)", "Vanves (92)", "Issy-les-Moulineaux (92)"
+];
+
+// Couronne 2 (quelques hubs, pas tout le monde, sinon illisible)
+const ring2Hubs = [
+  "Nanterre (92)", "Courbevoie (92)", "Puteaux (92)", "Suresnes (92)", "Saint-Cloud (92)",
+  "Asnières-sur-Seine (92)", "Colombes (92)",
+  "Bobigny (93)", "Drancy (93)", "Noisy-le-Sec (93)",
+  "Saint-Maurice (94)", "Alfortville (94)", "Vitry-sur-Seine (94)", "Villejuif (94)", "Cachan (94)", "Arcueil (94)"
+];
+
+// Approx population/hub flags (grossier, pour le filtre “pertinent”)
+const meta = {
+  [PARIS]: { pop: 2100000, hub: true, dept: "75" },
+  // ring1
+  "Boulogne-Billancourt (92)": { pop: 120000, hub: true, dept:"92" },
+  "Neuilly-sur-Seine (92)": { pop: 60000, hub: true, dept:"92" },
+  "Levallois-Perret (92)": { pop: 65000, hub: true, dept:"92" },
+  "Clichy (92)": { pop: 65000, hub: true, dept:"92" },
+  "Saint-Ouen-sur-Seine (93)": { pop: 52000, hub: true, dept:"93" },
+  "Saint-Denis (93)": { pop: 110000, hub: true, dept:"93" },
+  "Aubervilliers (93)": { pop: 90000, hub: true, dept:"93" },
+  "Pantin (93)": { pop: 60000, hub: true, dept:"93" },
+  "Les Lilas (93)": { pop: 23000, hub: true, dept:"93" },
+  "Le Pré-Saint-Gervais (93)": { pop: 18000, hub: true, dept:"93" },
+  "Bagnolet (93)": { pop: 42000, hub: true, dept:"93" },
+  "Montreuil (93)": { pop: 110000, hub: true, dept:"93" },
+  "Vincennes (94)": { pop: 50000, hub: true, dept:"94" },
+  "Saint-Mandé (94)": { pop: 22000, hub: true, dept:"94" },
+  "Charenton-le-Pont (94)": { pop: 30000, hub: true, dept:"94" },
+  "Ivry-sur-Seine (94)": { pop: 65000, hub: true, dept:"94" },
+  "Le Kremlin-Bicêtre (94)": { pop: 26000, hub: true, dept:"94" },
+  "Gentilly (94)": { pop: 19000, hub: true, dept:"94" },
+  "Montrouge (92)": { pop: 50000, hub: true, dept:"92" },
+  "Vanves (92)": { pop: 28000, hub: true, dept:"92" },
+  "Issy-les-Moulineaux (92)": { pop: 70000, hub: true, dept:"92" },
+
+  // ring2 hubs
+  "Nanterre (92)": { pop: 95000, hub: true, dept:"92" },
+  "Courbevoie (92)": { pop: 80000, hub: true, dept:"92" },
+  "Puteaux (92)": { pop: 45000, hub: true, dept:"92" },
+  "Suresnes (92)": { pop: 50000, hub: true, dept:"92" },
+  "Saint-Cloud (92)": { pop: 30000, hub: true, dept:"92" },
+  "Asnières-sur-Seine (92)": { pop: 90000, hub: true, dept:"92" },
+  "Colombes (92)": { pop: 85000, hub: true, dept:"92" },
+
+  "Bobigny (93)": { pop: 55000, hub: true, dept:"93" },
+  "Drancy (93)": { pop: 70000, hub: true, dept:"93" },
+  "Noisy-le-Sec (93)": { pop: 46000, hub: true, dept:"93" },
+
+  "Saint-Maurice (94)": { pop: 15000, hub: true, dept:"94" },
+  "Alfortville (94)": { pop: 45000, hub: true, dept:"94" },
+  "Vitry-sur-Seine (94)": { pop: 95000, hub: true, dept:"94" },
+  "Villejuif (94)": { pop: 57000, hub: true, dept:"94" },
+  "Cachan (94)": { pop: 30000, hub: true, dept:"94" },
+  "Arcueil (94)": { pop: 22000, hub: true, dept:"94" }
+};
+
+// Adjacence “limitrophe” (partielle mais cohérente pour démontrer les anneaux)
+const adj = new Map();
+function link(a,b){
+  if(!adj.has(a)) adj.set(a,new Set());
+  if(!adj.has(b)) adj.set(b,new Set());
+  adj.get(a).add(b); adj.get(b).add(a);
+}
+
+// Paris ↔ ring1 (définition de R1)
+for(const v of ring1Seed) link(PARIS, v);
+
+// Quelques liens ring1 ↔ ring1 (pour structure)
+link("Clichy (92)", "Levallois-Perret (92)");
+link("Levallois-Perret (92)", "Neuilly-sur-Seine (92)");
+link("Neuilly-sur-Seine (92)", "Boulogne-Billancourt (92)");
+link("Saint-Ouen-sur-Seine (93)", "Saint-Denis (93)");
+link("Aubervilliers (93)", "Pantin (93)");
+link("Pantin (93)", "Les Lilas (93)");
+link("Les Lilas (93)", "Bagnolet (93)");
+link("Bagnolet (93)", "Montreuil (93)");
+link("Montreuil (93)", "Vincennes (94)");
+link("Vincennes (94)", "Saint-Mandé (94)");
+link("Saint-Mandé (94)", "Charenton-le-Pont (94)");
+link("Charenton-le-Pont (94)", "Ivry-sur-Seine (94)");
+link("Ivry-sur-Seine (94)", "Le Kremlin-Bicêtre (94)");
+link("Le Kremlin-Bicêtre (94)", "Gentilly (94)");
+link("Gentilly (94)", "Montrouge (92)");
+link("Montrouge (92)", "Vanves (92)");
+link("Vanves (92)", "Issy-les-Moulineaux (92)");
+link("Issy-les-Moulineaux (92)", "Boulogne-Billancourt (92)");
+
+// ring2 hubs : connexions depuis ring1 (pas exhaustif)
+link("Levallois-Perret (92)", "Asnières-sur-Seine (92)");
+link("Asnières-sur-Seine (92)", "Colombes (92)");
+link("Neuilly-sur-Seine (92)", "Puteaux (92)");
+link("Puteaux (92)", "Courbevoie (92)");
+link("Courbevoie (92)", "Nanterre (92)");
+link("Boulogne-Billancourt (92)", "Saint-Cloud (92)");
+link("Saint-Cloud (92)", "Suresnes (92)");
+
+link("Pantin (93)", "Bobigny (93)");
+link("Bobigny (93)", "Drancy (93)");
+link("Pantin (93)", "Noisy-le-Sec (93)");
+
+link("Ivry-sur-Seine (94)", "Vitry-sur-Seine (94)");
+link("Le Kremlin-Bicêtre (94)", "Villejuif (94)");
+link("Gentilly (94)", "Arcueil (94)");
+link("Arcueil (94)", "Cachan (94)");
+link("Charenton-le-Pont (94)", "Saint-Maurice (94)");
+link("Saint-Maurice (94)", "Alfortville (94)");
+
+// Ajoute ring2Hubs au graphe même si isolés (sécurité)
+for(const v of ring2Hubs){ if(!adj.has(v)) adj.set(v,new Set()); }
+
+// “Grandes routes” (corridors stylisés = arêtes G)
+const routes = [
+  // Axe A1 (Nord)
+  ["Paris (75)", "Saint-Denis (93)"],
+  // Axe A3 (NE)
+  ["Paris (75)", "Bagnolet (93)"],
+  // Axe A4 (Est)
+  ["Paris (75)", "Charenton-le-Pont (94)"],
+  // Axe A6 (Sud)
+  ["Paris (75)", "Le Kremlin-Bicêtre (94)"],
+  // Axe A13/A14 (Ouest)
+  ["Paris (75)", "Neuilly-sur-Seine (92)"],
+  // Arc A86 (grossier)
+  ["Nanterre (92)", "Suresnes (92)"],
+  ["Suresnes (92)", "Issy-les-Moulineaux (92)"],
+  ["Issy-les-Moulineaux (92)", "Vitry-sur-Seine (94)"],
+  ["Vitry-sur-Seine (94)", "Bobigny (93)"],
+  ["Bobigny (93)", "Asnières-sur-Seine (92)"]
+];
+
+/** =========================
+ *  2) Pertinence
+ *  ========================= */
+function isRelevant(v){
+  const m = meta[v];
+  if(!m) return true; // si pas de métadonnées, on garde (tu peux durcir)
+  return (m.pop >= 30000) || (m.hub === true);
+}
+
+/** =========================
+ *  3) Couronnes = BFS niveaux
+ *  ========================= */
+function computeRings(kMax){
+  const visited = new Set([PARIS]);
+  let frontier = [PARIS];
+  const rings = [];
+  for(let k=1; k<=kMax; k++){
+    const next = [];
+    const ring = [];
+    for(const u of frontier){
+      for(const v of (adj.get(u) || [])){
+        if(!visited.has(v)){
+          visited.add(v);
+          next.push(v);
+          ring.push(v);
+        }
+      }
+    }
+    rings.push(ring.filter(isRelevant));
+    frontier = next;
+  }
+  return rings;
+}
+
+/** =========================
+ *  4) Placement (cercles)
+ *  ========================= */
+function place(nodesByRing){
+  // centre
+  const pos = new Map();
+  pos.set(PARIS, {x:600, y:400});
+
+  const radii = [0, 140, 250, 350, 440]; // ring1..ring4
+  for(let k=0; k<nodesByRing.length; k++){
+    const ring = nodesByRing[k];
+    const r = radii[k+1] || (140 + k*110);
+    // ordre “grossier” (on pourrait trier par quadrant, mais on reste simple)
+    for(let i=0; i<ring.length; i++){
+      const angle = (2*Math.PI) * (i / ring.length) - Math.PI/2; // start top
+      const cx = 600 + r * Math.cos(angle);
+      const cy = 400 + r * Math.sin(angle);
+      pos.set(ring[i], {x:cx, y:cy});
+    }
+  }
+  return pos;
+}
+
+/** =========================
+ *  5) Rendu SVG
+ *  ========================= */
+const svg = document.getElementById("viz");
+const toggleRoutes = document.getElementById("toggleRoutes");
+const toggleLabels = document.getElementById("toggleLabels");
+const kMaxInput = document.getElementById("kMax");
+const kVal = document.getElementById("kVal");
+
+function el(name, attrs={}){
+  const n = document.createElementNS("http://www.w3.org/2000/svg", name);
+  for(const [k,v] of Object.entries(attrs)) n.setAttribute(k, v);
+  return n;
+}
+
+function redraw(){
+  const kMax = parseInt(kMaxInput.value,10);
+  kVal.textContent = String(kMax);
+
+  while(svg.firstChild) svg.removeChild(svg.firstChild);
+
+  const rings = computeRings(kMax);
+  const all = [PARIS, ...rings.flat()];
+  const pos = place(rings);
+
+  // Cercles de couronne
+  const radii = [140, 250, 350, 440];
+  for(let i=0; i<kMax; i++){
+    svg.appendChild(el("circle", {
+      cx:600, cy:400, r:radii[i] || (140 + i*110),
+      fill:"none", stroke:"#2a2f3a", "stroke-width":2
+    }));
+  }
+
+  // Départements limitrophes (juste des badges textuels)
+  const deptText = el("text",{ x:20, y:30, fill:"#cfcfcf", "font-size":14 });
+  deptText.textContent = "Limitrophes 75 : 92 / 93 / 94";
+  svg.appendChild(deptText);
+
+  // Routes (corridors)
+  if(toggleRoutes.checked){
+    for(const [a,b] of routes){
+      const pa = pos.get(a), pb = pos.get(b);
+      if(!pa || !pb) continue;
+      svg.appendChild(el("line",{
+        x1:pa.x, y1:pa.y, x2:pb.x, y2:pb.y,
+        stroke:"#3b475e", "stroke-width":4, "stroke-linecap":"round", opacity:"0.75"
+      }));
+    }
+  }
+
+  // Nœuds
+  for(const v of all){
+    const p = pos.get(v);
+    if(!p) continue;
+
+    const isCenter = (v === PARIS);
+    const m = meta[v] || {};
+    const dept = m.dept || "";
+
+    const g = el("g");
+    g.appendChild(el("circle",{
+      cx:p.x, cy:p.y,
+      r: isCenter ? 14 : 9,
+      fill: isCenter ? "#ffffff" : "#cfd6e6",
+      opacity: isCenter ? "0.95" : "0.9"
+    }));
+    // petit “tag dept”
+    if(!isCenter && dept){
+      g.appendChild(el("text",{
+        x:p.x+12, y:p.y+4, fill:"#a7a7a7", "font-size":11
+      })).textContent = dept;
+    }
+    if(toggleLabels.checked){
+      g.appendChild(el("text",{
+        x:p.x+12, y:p.y-10, fill:"#e6e6e6", "font-size":12
+      })).textContent = v.replace(/\s\(\d+\)$/,"");
+    }
+    svg.appendChild(g);
+  }
+}
+
+kMaxInput.addEventListener("input", redraw);
+toggleRoutes.addEventListener("change", redraw);
+toggleLabels.addEventListener("change", redraw);
+
+redraw();
+</script>
+</body>
+</html>
