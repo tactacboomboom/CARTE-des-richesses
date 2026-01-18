@@ -1,0 +1,609 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Paris (75) – Couronnes + Orientation/Zoom + Arrondissements (stylisé)</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 0; background:#0b0c10; color:#e6e6e6; }
+    header { padding: 16px 20px; border-bottom: 1px solid #222; }
+    .row { display:flex; gap:16px; padding:16px 20px; flex-wrap:wrap; }
+    .card { background:#12141a; border:1px solid #222; border-radius:12px; padding:12px; }
+    .controls { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    label { display:flex; gap:8px; align-items:center; cursor:pointer; }
+    input[type="range"] { width: 200px; }
+    button {
+      background:#171a22; color:#e6e6e6; border:1px solid #2a2a2a;
+      border-radius:10px; padding:8px 10px; cursor:pointer;
+    }
+    button:active { transform: translateY(1px); }
+    svg { width: 100%; height: calc(100vh - 190px); display:block;
+      background: radial-gradient(circle at center, #0f1118, #07080c);
+      touch-action: none; /* important for pointer events */
+    }
+    .muted { color:#a7a7a7; font-size: 13px; line-height: 1.35; }
+    .chip { display:inline-block; padding:2px 8px; border:1px solid #2a2a2a; border-radius:999px; font-size:12px; color:#cfcfcf; }
+    .legend { display:flex; gap:10px; flex-wrap:wrap; }
+    code { color:#cfd6e6; }
+  </style>
+</head>
+<body>
+<header>
+  <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:baseline;">
+    <h2 style="margin:0;">Paris (75) – Couronnes + Orientation/Zoom + Arrondissements (stylisé)</h2>
+    <div class="legend">
+      <span class="chip">Rotation N/E/S/O</span>
+      <span class="chip">Zoom molette + slider</span>
+      <span class="chip">Pan: drag</span>
+      <span class="chip">Arrondissements: schéma (non cadastral)</span>
+    </div>
+  </div>
+  <p class="muted" style="margin:8px 0 0;">
+    Tout est volontairement stylisé: le but est la lisibilité + structure (BFS), pas la géodésie.
+  </p>
+</header>
+
+<div class="row">
+  <div class="card" style="flex: 1 1 520px;">
+    <div class="controls">
+      <label><input type="checkbox" id="toggleRoutes" checked>Routes (corridors)</label>
+      <label><input type="checkbox" id="toggleLabels" checked>Labels villes</label>
+      <label><input type="checkbox" id="toggleArr" checked>Arrondissements</label>
+
+      <label style="gap:10px;">
+        Couronnes max:
+        <input type="range" id="kMax" min="1" max="4" value="4" />
+        <span id="kVal" class="chip">4</span>
+      </label>
+
+      <label style="gap:10px;">
+        Zoom:
+        <input type="range" id="zoom" min="0.5" max="2.5" step="0.05" value="1" />
+        <span id="zVal" class="chip">1.00×</span>
+      </label>
+    </div>
+
+    <div class="controls" style="margin-top:10px;">
+      <span class="muted">Orientation:</span>
+      <button id="btnN" title="Nord en haut">N</button>
+      <button id="btnE" title="Est en haut">E</button>
+      <button id="btnS" title="Sud en haut">S</button>
+      <button id="btnW" title="Ouest en haut">O</button>
+      <button id="btnReset" title="Reset vue">Reset vue</button>
+    </div>
+
+    <p class="muted" style="margin:10px 0 0;">
+      Astuces: molette = zoom, drag = pan. Double-clic = reset vue.
+    </p>
+  </div>
+
+  <div class="card" style="flex: 1 1 420px;">
+    <p class="muted" style="margin:0;">
+      R₄ est ajouté en mode “villes pertinentes” (hubs).  
+      Si tu veux R₄ exhaustif, il faut une vraie base de limitrophies (SIG/OSM). Sinon tu vas juste fabriquer de la fiction administrative, ce qui est très humain.
+    </p>
+  </div>
+</div>
+
+<svg id="viz" viewBox="0 0 1200 800" aria-label="Schéma couronnes Paris"></svg>
+
+<script>
+/** =========================
+ *  1) Données
+ *  ========================= */
+const PARIS = "Paris (75)";
+
+const ring1Seed = [
+  "Boulogne-Billancourt (92)", "Neuilly-sur-Seine (92)", "Levallois-Perret (92)", "Clichy (92)",
+  "Saint-Ouen-sur-Seine (93)", "Saint-Denis (93)", "Aubervilliers (93)",
+  "Pantin (93)", "Les Lilas (93)", "Le Pré-Saint-Gervais (93)", "Bagnolet (93)", "Montreuil (93)",
+  "Vincennes (94)", "Saint-Mandé (94)", "Charenton-le-Pont (94)", "Ivry-sur-Seine (94)",
+  "Le Kremlin-Bicêtre (94)", "Gentilly (94)", "Montrouge (92)", "Vanves (92)", "Issy-les-Moulineaux (92)"
+];
+
+const ring2Hubs = [
+  "Nanterre (92)", "Courbevoie (92)", "Puteaux (92)", "Suresnes (92)", "Saint-Cloud (92)",
+  "Asnières-sur-Seine (92)", "Colombes (92)",
+  "Bobigny (93)", "Drancy (93)", "Noisy-le-Sec (93)",
+  "Alfortville (94)", "Vitry-sur-Seine (94)", "Villejuif (94)", "Cachan (94)", "Arcueil (94)"
+];
+
+// R4 hubs (villes pertinentes de grande couronne / proche grande couronne, en mode lisible)
+const ring4Hubs = [
+  // Ouest / Sud-Ouest
+  "Versailles (78)", "Saint-Germain-en-Laye (78)", "Rueil-Malmaison (92)", "Massy (91)",
+  // Nord / Nord-Est
+  "Roissy-en-France (95)", "Sarcelles (95)", "Aulnay-sous-Bois (93)", "Villepinte (93)",
+  // Est
+  "Noisy-le-Grand (93)", "Torcy (77)", "Meaux (77)",
+  // Sud / Sud-Est
+  "Créteil (94)", "Orly (94)", "Évry-Courcouronnes (91)", "Melun (77)"
+];
+
+// Métadonnées simples (pertinence)
+const meta = {
+  [PARIS]: { pop: 2100000, hub: true, dept: "75" },
+
+  // ring1 (partial)
+  "Boulogne-Billancourt (92)": { pop: 120000, hub: true, dept:"92" },
+  "Neuilly-sur-Seine (92)": { pop: 60000, hub: true, dept:"92" },
+  "Levallois-Perret (92)": { pop: 65000, hub: true, dept:"92" },
+  "Clichy (92)": { pop: 65000, hub: true, dept:"92" },
+  "Saint-Ouen-sur-Seine (93)": { pop: 52000, hub: true, dept:"93" },
+  "Saint-Denis (93)": { pop: 110000, hub: true, dept:"93" },
+  "Aubervilliers (93)": { pop: 90000, hub: true, dept:"93" },
+  "Pantin (93)": { pop: 60000, hub: true, dept:"93" },
+  "Les Lilas (93)": { pop: 23000, hub: true, dept:"93" },
+  "Le Pré-Saint-Gervais (93)": { pop: 18000, hub: true, dept:"93" },
+  "Bagnolet (93)": { pop: 42000, hub: true, dept:"93" },
+  "Montreuil (93)": { pop: 110000, hub: true, dept:"93" },
+  "Vincennes (94)": { pop: 50000, hub: true, dept:"94" },
+  "Saint-Mandé (94)": { pop: 22000, hub: true, dept:"94" },
+  "Charenton-le-Pont (94)": { pop: 30000, hub: true, dept:"94" },
+  "Ivry-sur-Seine (94)": { pop: 65000, hub: true, dept:"94" },
+  "Le Kremlin-Bicêtre (94)": { pop: 26000, hub: true, dept:"94" },
+  "Gentilly (94)": { pop: 19000, hub: true, dept:"94" },
+  "Montrouge (92)": { pop: 50000, hub: true, dept:"92" },
+  "Vanves (92)": { pop: 28000, hub: true, dept:"92" },
+  "Issy-les-Moulineaux (92)": { pop: 70000, hub: true, dept:"92" },
+
+  // ring2 hubs
+  "Nanterre (92)": { pop: 95000, hub: true, dept:"92" },
+  "Courbevoie (92)": { pop: 80000, hub: true, dept:"92" },
+  "Puteaux (92)": { pop: 45000, hub: true, dept:"92" },
+  "Suresnes (92)": { pop: 50000, hub: true, dept:"92" },
+  "Saint-Cloud (92)": { pop: 30000, hub: true, dept:"92" },
+  "Asnières-sur-Seine (92)": { pop: 90000, hub: true, dept:"92" },
+  "Colombes (92)": { pop: 85000, hub: true, dept:"92" },
+  "Bobigny (93)": { pop: 55000, hub: true, dept:"93" },
+  "Drancy (93)": { pop: 70000, hub: true, dept:"93" },
+  "Noisy-le-Sec (93)": { pop: 46000, hub: true, dept:"93" },
+  "Alfortville (94)": { pop: 45000, hub: true, dept:"94" },
+  "Vitry-sur-Seine (94)": { pop: 95000, hub: true, dept:"94" },
+  "Villejuif (94)": { pop: 57000, hub: true, dept:"94" },
+  "Cachan (94)": { pop: 30000, hub: true, dept:"94" },
+  "Arcueil (94)": { pop: 22000, hub: true, dept:"94" },
+
+  // ring4 hubs
+  "Versailles (78)": { pop: 85000, hub: true, dept:"78" },
+  "Saint-Germain-en-Laye (78)": { pop: 45000, hub: true, dept:"78" },
+  "Rueil-Malmaison (92)": { pop: 78000, hub: true, dept:"92" },
+  "Massy (91)": { pop: 50000, hub: true, dept:"91" },
+
+  "Roissy-en-France (95)": { pop: 3000, hub: true, dept:"95" }, // hub aéroport > pop
+  "Sarcelles (95)": { pop: 58000, hub: true, dept:"95" },
+  "Aulnay-sous-Bois (93)": { pop: 85000, hub: true, dept:"93" },
+  "Villepinte (93)": { pop: 38000, hub: true, dept:"93" },
+
+  "Noisy-le-Grand (93)": { pop: 70000, hub: true, dept:"93" },
+  "Torcy (77)": { pop: 22000, hub: true, dept:"77" },
+  "Meaux (77)": { pop: 55000, hub: true, dept:"77" },
+
+  "Créteil (94)": { pop: 92000, hub: true, dept:"94" },
+  "Orly (94)": { pop: 24000, hub: true, dept:"94" },
+  "Évry-Courcouronnes (91)": { pop: 66000, hub: true, dept:"91" },
+  "Melun (77)": { pop: 42000, hub: true, dept:"77" }
+};
+
+// Adjacence (limitrophie partielle, suffisante pour BFS démo)
+const adj = new Map();
+function link(a,b){
+  if(!adj.has(a)) adj.set(a,new Set());
+  if(!adj.has(b)) adj.set(b,new Set());
+  adj.get(a).add(b); adj.get(b).add(a);
+}
+function ensureNode(v){ if(!adj.has(v)) adj.set(v, new Set()); }
+
+ensureNode(PARIS);
+for(const v of ring1Seed) link(PARIS, v);
+
+// ring1 chain
+link("Clichy (92)", "Levallois-Perret (92)");
+link("Levallois-Perret (92)", "Neuilly-sur-Seine (92)");
+link("Neuilly-sur-Seine (92)", "Boulogne-Billancourt (92)");
+link("Saint-Ouen-sur-Seine (93)", "Saint-Denis (93)");
+link("Aubervilliers (93)", "Pantin (93)");
+link("Pantin (93)", "Les Lilas (93)");
+link("Les Lilas (93)", "Bagnolet (93)");
+link("Bagnolet (93)", "Montreuil (93)");
+link("Montreuil (93)", "Vincennes (94)");
+link("Vincennes (94)", "Saint-Mandé (94)");
+link("Saint-Mandé (94)", "Charenton-le-Pont (94)");
+link("Charenton-le-Pont (94)", "Ivry-sur-Seine (94)");
+link("Ivry-sur-Seine (94)", "Le Kremlin-Bicêtre (94)");
+link("Le Kremlin-Bicêtre (94)", "Gentilly (94)");
+link("Gentilly (94)", "Montrouge (92)");
+link("Montrouge (92)", "Vanves (92)");
+link("Vanves (92)", "Issy-les-Moulineaux (92)");
+link("Issy-les-Moulineaux (92)", "Boulogne-Billancourt (92)");
+
+// ring2 hubs
+for(const v of ring2Hubs) ensureNode(v);
+link("Levallois-Perret (92)", "Asnières-sur-Seine (92)");
+link("Asnières-sur-Seine (92)", "Colombes (92)");
+link("Neuilly-sur-Seine (92)", "Puteaux (92)");
+link("Puteaux (92)", "Courbevoie (92)");
+link("Courbevoie (92)", "Nanterre (92)");
+link("Boulogne-Billancourt (92)", "Saint-Cloud (92)");
+link("Saint-Cloud (92)", "Suresnes (92)");
+link("Pantin (93)", "Bobigny (93)");
+link("Bobigny (93)", "Drancy (93)");
+link("Pantin (93)", "Noisy-le-Sec (93)");
+link("Ivry-sur-Seine (94)", "Vitry-sur-Seine (94)");
+link("Le Kremlin-Bicêtre (94)", "Villejuif (94)");
+link("Gentilly (94)", "Arcueil (94)");
+link("Arcueil (94)", "Cachan (94)");
+link("Charenton-le-Pont (94)", "Alfortville (94)");
+
+// ring4 hubs
+for(const v of ring4Hubs) ensureNode(v);
+
+// Connexions pour que BFS atteigne R4 (via R2/R3 implicites)
+link("Nanterre (92)", "Rueil-Malmaison (92)");
+link("Rueil-Malmaison (92)", "Saint-Germain-en-Laye (78)");
+link("Saint-Germain-en-Laye (78)", "Versailles (78)");
+
+link("Villejuif (94)", "Orly (94)");
+link("Orly (94)", "Massy (91)");
+link("Massy (91)", "Évry-Courcouronnes (91)");
+
+link("Bobigny (93)", "Aulnay-sous-Bois (93)");
+link("Aulnay-sous-Bois (93)", "Villepinte (93)");
+link("Villepinte (93)", "Roissy-en-France (95)");
+link("Aulnay-sous-Bois (93)", "Sarcelles (95)");
+
+link("Montreuil (93)", "Noisy-le-Grand (93)");
+link("Noisy-le-Grand (93)", "Torcy (77)");
+link("Torcy (77)", "Meaux (77)");
+
+link("Alfortville (94)", "Créteil (94)");
+link("Créteil (94)", "Melun (77)");
+
+// Routes (corridors stylisés)
+const routes = [
+  ["Paris (75)", "Saint-Denis (93)"],      // A1
+  ["Paris (75)", "Bagnolet (93)"],         // A3
+  ["Paris (75)", "Charenton-le-Pont (94)"],// A4
+  ["Paris (75)", "Le Kremlin-Bicêtre (94)"],// A6
+  ["Paris (75)", "Neuilly-sur-Seine (92)"],// A13
+  // “A86”
+  ["Nanterre (92)", "Suresnes (92)"],
+  ["Suresnes (92)", "Issy-les-Moulineaux (92)"],
+  ["Issy-les-Moulineaux (92)", "Vitry-sur-Seine (94)"],
+  ["Vitry-sur-Seine (94)", "Bobigny (93)"],
+  ["Bobigny (93)", "Asnières-sur-Seine (92)"],
+  // extensions vers R4 hubs (style)
+  ["Nanterre (92)", "Rueil-Malmaison (92)"],
+  ["Rueil-Malmaison (92)", "Versailles (78)"],
+  ["Villepinte (93)", "Roissy-en-France (95)"],
+  ["Noisy-le-Grand (93)", "Torcy (77)"],
+  ["Créteil (94)", "Melun (77)"],
+  ["Massy (91)", "Évry-Courcouronnes (91)"]
+];
+
+/** =========================
+ *  2) Pertinence
+ *  ========================= */
+function isRelevant(v){
+  const m = meta[v];
+  if(!m) return true;
+  return (m.pop >= 30000) || (m.hub === true);
+}
+
+/** =========================
+ *  3) BFS rings
+ *  ========================= */
+function computeRings(kMax){
+  const visited = new Set([PARIS]);
+  let frontier = [PARIS];
+  const rings = [];
+  for(let k=1; k<=kMax; k++){
+    const next = [];
+    const ring = [];
+    for(const u of frontier){
+      for(const v of (adj.get(u) || [])){
+        if(!visited.has(v)){
+          visited.add(v);
+          next.push(v);
+          ring.push(v);
+        }
+      }
+    }
+    rings.push(ring.filter(isRelevant));
+    frontier = next;
+  }
+  return rings;
+}
+
+/** =========================
+ *  4) Placement (cercles)
+ *  ========================= */
+function place(nodesByRing){
+  const pos = new Map();
+  pos.set(PARIS, {x:600, y:400});
+
+  const radii = [0, 140, 250, 350, 460]; // ring1..ring4
+  for(let k=0; k<nodesByRing.length; k++){
+    const ring = nodesByRing[k];
+    const r = radii[k+1] || (140 + k*110);
+    for(let i=0; i<ring.length; i++){
+      const angle = (2*Math.PI) * (i / ring.length) - Math.PI/2;
+      pos.set(ring[i], {
+        x:600 + r*Math.cos(angle),
+        y:400 + r*Math.sin(angle)
+      });
+    }
+  }
+  return pos;
+}
+
+/** =========================
+ *  5) SVG helpers
+ *  ========================= */
+const svg = document.getElementById("viz");
+const toggleRoutes = document.getElementById("toggleRoutes");
+const toggleLabels = document.getElementById("toggleLabels");
+const toggleArr = document.getElementById("toggleArr");
+const kMaxInput = document.getElementById("kMax");
+const kVal = document.getElementById("kVal");
+const zoomInput = document.getElementById("zoom");
+const zVal = document.getElementById("zVal");
+
+const btnN = document.getElementById("btnN");
+const btnE = document.getElementById("btnE");
+const btnS = document.getElementById("btnS");
+const btnW = document.getElementById("btnW");
+const btnReset = document.getElementById("btnReset");
+
+function el(name, attrs={}){
+  const n = document.createElementNS("http://www.w3.org/2000/svg", name);
+  for(const [k,v] of Object.entries(attrs)) n.setAttribute(k, v);
+  return n;
+}
+
+/** =========================
+ *  6) Vue (pan/zoom/rotate)
+ *  ========================= */
+let view = {
+  theta: 0,     // degrees
+  scale: 1,
+  tx: 0,
+  ty: 0
+};
+
+function clamp(x, a, b){ return Math.max(a, Math.min(b, x)); }
+
+function applyTransform(targetG){
+  const cx = 600, cy = 400; // pivot centre
+  const t = `translate(${view.tx} ${view.ty}) translate(${cx} ${cy}) rotate(${view.theta}) scale(${view.scale}) translate(${-cx} ${-cy})`;
+  targetG.setAttribute("transform", t);
+}
+
+/** =========================
+ *  7) Arrondissements (stylisés)
+ *  ========================= */
+function drawArrondissements(g){
+  // On dessine 20 secteurs dans un disque “Paris”.
+  // Ce n’est PAS le vrai tracé en escargot. C’est un repère visuel.
+  const cx=600, cy=400;
+  const rOuter=85;
+  const rInner=25;
+
+  const ring = el("g", { opacity:"0.9" });
+
+  // disque de fond Paris
+  ring.appendChild(el("circle", { cx, cy, r:rOuter, fill:"#0f1320", stroke:"#2a2f3a", "stroke-width":2 }));
+
+  const n=20;
+  for(let i=0; i<n; i++){
+    const a0 = (2*Math.PI)*(i/n) - Math.PI/2;
+    const a1 = (2*Math.PI)*((i+1)/n) - Math.PI/2;
+
+    const x0 = cx + rInner*Math.cos(a0), y0 = cy + rInner*Math.sin(a0);
+    const x1 = cx + rOuter*Math.cos(a0), y1 = cy + rOuter*Math.sin(a0);
+    const x2 = cx + rOuter*Math.cos(a1), y2 = cy + rOuter*Math.sin(a1);
+    const x3 = cx + rInner*Math.cos(a1), y3 = cy + rInner*Math.sin(a1);
+
+    const largeArc = (a1-a0) > Math.PI ? 1 : 0;
+
+    const d = [
+      `M ${x0} ${y0}`,
+      `L ${x1} ${y1}`,
+      `A ${rOuter} ${rOuter} 0 ${largeArc} 1 ${x2} ${y2}`,
+      `L ${x3} ${y3}`,
+      `A ${rInner} ${rInner} 0 ${largeArc} 0 ${x0} ${y0}`,
+      "Z"
+    ].join(" ");
+
+    ring.appendChild(el("path", {
+      d,
+      fill: (i%2===0) ? "#111a2a" : "#0c1422",
+      stroke:"#2a2f3a",
+      "stroke-width":1
+    }));
+
+    const am = (a0+a1)/2;
+    const lx = cx + (rInner + (rOuter-rInner)*0.62)*Math.cos(am);
+    const ly = cy + (rInner + (rOuter-rInner)*0.62)*Math.sin(am);
+
+    const t = el("text", { x:lx, y:ly, fill:"#cfd6e6", "font-size":10, "text-anchor":"middle", "dominant-baseline":"middle" });
+    t.textContent = String(i+1);
+    ring.appendChild(t);
+  }
+
+  const label = el("text", { x: cx, y: cy+4, fill:"#ffffff", "font-size":12, "text-anchor":"middle", opacity:"0.9" });
+  label.textContent = "Paris (arr.)";
+  ring.appendChild(label);
+
+  g.appendChild(ring);
+}
+
+/** =========================
+ *  8) Rendu principal
+ *  ========================= */
+let rootG;     // conteneur transformé (pan/zoom/rotate)
+let contentG;  // contenu du schéma
+
+function redraw(){
+  const kMax = parseInt(kMaxInput.value,10);
+  kVal.textContent = String(kMax);
+
+  while(svg.firstChild) svg.removeChild(svg.firstChild);
+
+  rootG = el("g");     // transform applied here
+  contentG = el("g");  // content inside
+  rootG.appendChild(contentG);
+  svg.appendChild(rootG);
+
+  applyTransform(rootG);
+
+  const rings = computeRings(kMax);
+  const all = [PARIS, ...rings.flat()];
+  const pos = place(rings);
+
+  // Cercles couronnes
+  const radii = [140, 250, 350, 460];
+  for(let i=0; i<kMax; i++){
+    contentG.appendChild(el("circle", {
+      cx:600, cy:400, r:radii[i] || (140 + i*110),
+      fill:"none", stroke:"#2a2f3a", "stroke-width":2
+    }));
+  }
+
+  // Arrondissements
+  if(toggleArr.checked){
+    drawArrondissements(contentG);
+  }
+
+  // Routes
+  if(toggleRoutes.checked){
+    for(const [a,b] of routes){
+      const pa = pos.get(a), pb = pos.get(b);
+      if(!pa || !pb) continue;
+      contentG.appendChild(el("line",{
+        x1:pa.x, y1:pa.y, x2:pb.x, y2:pb.y,
+        stroke:"#3b475e", "stroke-width":4, "stroke-linecap":"round", opacity:"0.75"
+      }));
+    }
+  }
+
+  // Nœuds
+  for(const v of all){
+    const p = pos.get(v);
+    if(!p) continue;
+
+    const isCenter = (v === PARIS);
+    const m = meta[v] || {};
+    const dept = m.dept || "";
+
+    const g = el("g");
+    g.appendChild(el("circle",{
+      cx:p.x, cy:p.y,
+      r: isCenter ? 14 : 9,
+      fill: isCenter ? "#ffffff" : "#cfd6e6",
+      opacity: isCenter ? "0.95" : "0.9"
+    }));
+
+    if(!isCenter && dept){
+      const dt = el("text",{
+        x:p.x+12, y:p.y+4, fill:"#a7a7a7", "font-size":11
+      });
+      dt.textContent = dept;
+      g.appendChild(dt);
+    }
+
+    if(toggleLabels.checked){
+      const nm = el("text",{
+        x:p.x+12, y:p.y-10, fill:"#e6e6e6", "font-size":12
+      });
+      nm.textContent = v.replace(/\s\(\d+\)$/,"");
+      g.appendChild(nm);
+    }
+    contentG.appendChild(g);
+  }
+
+  // mini texte fixe (hors transform) pour rappeler gestes
+  const ui = el("text",{ x:20, y:30, fill:"#cfcfcf", "font-size":14 });
+  ui.textContent = "Molette=zoom | Drag=pan | Double-clic=reset | Rotation=N/E/S/O";
+  svg.appendChild(ui);
+}
+
+/** =========================
+ *  9) Contrôles UI
+ *  ========================= */
+function setTheta(deg){
+  view.theta = ((deg % 360) + 360) % 360;
+  applyTransform(rootG);
+}
+function setScale(s){
+  view.scale = clamp(s, 0.5, 2.5);
+  zoomInput.value = String(view.scale);
+  zVal.textContent = `${view.scale.toFixed(2)}×`;
+  applyTransform(rootG);
+}
+function resetView(){
+  view.theta = 0;
+  view.scale = 1;
+  view.tx = 0;
+  view.ty = 0;
+  setScale(1);
+  applyTransform(rootG);
+}
+
+kMaxInput.addEventListener("input", redraw);
+toggleRoutes.addEventListener("change", redraw);
+toggleLabels.addEventListener("change", redraw);
+toggleArr.addEventListener("change", redraw);
+
+zoomInput.addEventListener("input", () => setScale(parseFloat(zoomInput.value)));
+
+btnN.addEventListener("click", () => setTheta(0));
+btnE.addEventListener("click", () => setTheta(90));
+btnS.addEventListener("click", () => setTheta(180));
+btnW.addEventListener("click", () => setTheta(270));
+btnReset.addEventListener("click", () => resetView());
+
+svg.addEventListener("dblclick", () => resetView());
+
+/** =========================
+ *  10) Zoom (molette) + Pan (drag)
+ *  ========================= */
+let dragging = false;
+let last = {x:0, y:0};
+
+svg.addEventListener("pointerdown", (e) => {
+  dragging = true;
+  svg.setPointerCapture(e.pointerId);
+  last = { x: e.clientX, y: e.clientY };
+});
+
+svg.addEventListener("pointermove", (e) => {
+  if(!dragging) return;
+  const dx = e.clientX - last.x;
+  const dy = e.clientY - last.y;
+  last = { x: e.clientX, y: e.clientY };
+  view.tx += dx;
+  view.ty += dy;
+  applyTransform(rootG);
+});
+
+svg.addEventListener("pointerup", (e) => {
+  dragging = false;
+  try { svg.releasePointerCapture(e.pointerId); } catch {}
+});
+
+svg.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const delta = -e.deltaY;
+  const factor = (delta > 0) ? 1.07 : 0.93;
+  setScale(view.scale * factor);
+}, { passive:false });
+
+/** =========================
+ *  Init
+ *  ========================= */
+redraw();
+setScale(1);
+</script>
+</body>
+</html>
